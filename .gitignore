@@ -1,0 +1,58 @@
+# =========================
+# Secrets / environment
+# =========================
+.env
+.env.*
+!.env.example
+*.secret
+*.secrets
+secrets.json
+
+# Telegram
+telegram-token.txt
+
+# Azure
+.azure/
+.azure-dev/
+.azureenv/
+*.publishsettings
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build / temp
+dist/
+build/
+tmp/
+temp/
+
+# Logs
+*.log
+
+# Local data generated during testing
+data/local/
+data/output/
