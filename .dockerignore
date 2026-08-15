@@ -1,0 +1,12 @@
+.git
+.gitignore
+**/node_modules
+**/dist
+.env
+telegram-token.txt
+.vscode
+.idea
+docs
+knowledge
+tests
+infra
