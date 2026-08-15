@@ -6,6 +6,20 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 
+type WorkOrderRecord = {
+  work_order_id: string;
+  site_id: string;
+  equipment_model: string;
+};
+
+type InventoryRecord = {
+  site_id: string;
+  part_number: string;
+  description: string;
+  compatible_with: string[];
+  quantity: number;
+};
+
 function createServer() {
   const server = new McpServer({
     name: "fieldops-mcp",
@@ -57,7 +71,96 @@ function createServer() {
       };
     }
   );
+    server.registerTool(
+    "check_inventory",
+    {
+      title: "Check Inventory",
+      description:
+        "Consulta disponibilidad y compatibilidad de un repuesto para una orden de trabajo.",
+      inputSchema: {
+        work_order_id: z.string().min(1),
+        part_number: z.string().min(1)
+      }
+    },
+    async ({ work_order_id, part_number }) => {
+      const workOrdersPath = path.resolve(
+        process.cwd(),
+        "../data/seed/work-orders.json"
+      );
 
+      const inventoryPath = path.resolve(
+        process.cwd(),
+        "../data/seed/inventory.json"
+      );
+
+      const [workOrdersRaw, inventoryRaw] = await Promise.all([
+        fs.readFile(workOrdersPath, "utf8"),
+        fs.readFile(inventoryPath, "utf8")
+      ]);
+
+      const workOrders = JSON.parse(workOrdersRaw) as WorkOrderRecord[];
+      const inventory = JSON.parse(inventoryRaw) as InventoryRecord[];
+
+      const workOrder = workOrders.find(
+        (item) => item.work_order_id === work_order_id
+      );
+
+      if (!workOrder) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `No se encontró la orden ${work_order_id}.`
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const inventoryItem = inventory.find(
+        (item) =>
+          item.site_id === workOrder.site_id &&
+          item.part_number === part_number
+      );
+
+      if (!inventoryItem) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `No se encontró el repuesto ${part_number} ` +
+                `en el inventario del sitio ${workOrder.site_id}.`
+            }
+          ],
+          isError: true
+        };
+      }
+
+      const result = {
+        work_order_id: workOrder.work_order_id,
+        site_id: workOrder.site_id,
+        equipment_model: workOrder.equipment_model,
+        part_number: inventoryItem.part_number,
+        description: inventoryItem.description,
+        quantity: inventoryItem.quantity,
+        compatible: inventoryItem.compatible_with.includes(
+          workOrder.equipment_model
+        ),
+        available: inventoryItem.quantity > 0
+      };
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result)
+          }
+        ],
+        structuredContent: result
+      };
+    }
+  );
   return server;
 }
 const app = createMcpExpressApp();
