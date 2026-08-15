@@ -1,0 +1,35 @@
+[
+  {
+    "work_order_id": "OT-1042",
+    "site_id": "SITE-BOG-01",
+    "customer": "Cliente Demo Norte",
+    "equipment_family": "Honeywell",
+    "equipment_model": "VISTA-48LA",
+    "symptom": "Panel sin conectividad y teclado reporta falla",
+    "priority": "HIGH",
+    "status": "OPEN",
+    "technician_id": "TEC-001"
+  },
+  {
+    "work_order_id": "OT-2040",
+    "site_id": "SITE-BOG-02",
+    "customer": "Cliente Demo Centro",
+    "equipment_family": "DSC",
+    "equipment_model": "PC1832",
+    "symptom": "Falla de batería y problema de zona",
+    "priority": "MEDIUM",
+    "status": "OPEN",
+    "technician_id": "TEC-002"
+  },
+  {
+    "work_order_id": "OT-3099",
+    "site_id": "SITE-BOG-03",
+    "customer": "Cliente Demo Sur",
+    "equipment_family": "Honeywell",
+    "equipment_model": "VISTA-128BPT",
+    "symptom": "Dispositivo inalámbrico no responde",
+    "priority": "HIGH",
+    "status": "OPEN",
+    "technician_id": "TEC-001"
+  }
+]

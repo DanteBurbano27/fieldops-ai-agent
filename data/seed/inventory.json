@@ -1,0 +1,41 @@
+[
+  {
+    "site_id": "SITE-BOG-01",
+    "part_number": "BAT-12V7AH",
+    "description": "Batería sellada 12V 7Ah",
+    "compatible_with": [
+      "VISTA-48LA",
+      "VISTA-50P",
+      "VISTA-128BPT",
+      "PC1832"
+    ],
+    "quantity": 3
+  },
+  {
+    "site_id": "SITE-BOG-01",
+    "part_number": "DSC-PC5108",
+    "description": "Módulo expansor de 8 zonas DSC",
+    "compatible_with": [
+      "PC1832"
+    ],
+    "quantity": 1
+  },
+  {
+    "site_id": "SITE-BOG-02",
+    "part_number": "BAT-12V7AH",
+    "description": "Batería sellada 12V 7Ah",
+    "compatible_with": [
+      "PC1832"
+    ],
+    "quantity": 0
+  },
+  {
+    "site_id": "SITE-BOG-03",
+    "part_number": "RF-5800-GENERIC",
+    "description": "Repuesto demo dispositivo inalámbrico serie 5800",
+    "compatible_with": [
+      "VISTA-128BPT"
+    ],
+    "quantity": 2
+  }
+]

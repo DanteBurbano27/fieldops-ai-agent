@@ -1,0 +1,21 @@
+[
+  {
+    "technician_id": "TEC-001",
+    "name": "Carlos Mendoza",
+    "skills": [
+      "Honeywell VISTA-48LA",
+      "Honeywell VISTA-128BPT",
+      "RF 5800"
+    ],
+    "status": "AVAILABLE"
+  },
+  {
+    "technician_id": "TEC-002",
+    "name": "Laura Gómez",
+    "skills": [
+      "DSC PC1832",
+      "Honeywell VISTA-50P"
+    ],
+    "status": "AVAILABLE"
+  }
+]
