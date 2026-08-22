@@ -64,6 +64,14 @@ async function withInterventionWriteLock<T>(
   }
 }
 
+const dataDir = process.env.FIELDOPS_DATA_DIR
+  ? path.resolve(process.env.FIELDOPS_DATA_DIR)
+  : path.resolve(process.cwd(), "../data/seed");
+
+function dataFile(fileName: string): string {
+  return path.join(dataDir, fileName);
+}
+
 function createServer() {
   const server = new McpServer({
     name: "fieldops-mcp",
@@ -80,10 +88,8 @@ function createServer() {
       }
     },
     async ({ work_order_id }) => {
-      const filePath = path.resolve(
-        process.cwd(),
-        "../data/seed/work-orders.json"
-      );
+      const filePath = dataFile("work-orders.json");
+      
 
       const raw = await fs.readFile(filePath, "utf8");
       const workOrders = JSON.parse(raw) as Array<Record<string, unknown>>;
@@ -127,16 +133,8 @@ function createServer() {
       }
     },
     async ({ work_order_id, part_number }) => {
-      const workOrdersPath = path.resolve(
-        process.cwd(),
-        "../data/seed/work-orders.json"
-      );
-
-      const inventoryPath = path.resolve(
-        process.cwd(),
-        "../data/seed/inventory.json"
-      );
-
+     const workOrdersPath = dataFile("work-orders.json");
+     const inventoryPath = dataFile("inventory.json");
       const [workOrdersRaw, inventoryRaw] = await Promise.all([
         fs.readFile(workOrdersPath, "utf8"),
         fs.readFile(inventoryPath, "utf8")
@@ -243,20 +241,9 @@ function createServer() {
         };
       }
 
-      const workOrdersPath = path.resolve(
-        process.cwd(),
-        "../data/seed/work-orders.json"
-      );
-
-      const techniciansPath = path.resolve(
-        process.cwd(),
-        "../data/seed/technicians.json"
-      );
-
-      const interventionsPath = path.resolve(
-        process.cwd(),
-        "../data/seed/interventions.json"
-      );
+      const workOrdersPath = dataFile("work-orders.json");
+      const techniciansPath = dataFile("technicians.json");
+      const interventionsPath = dataFile("interventions.json");
 
       const [workOrdersRaw, techniciansRaw] = await Promise.all([
         fs.readFile(workOrdersPath, "utf8"),
@@ -403,7 +390,15 @@ function createServer() {
 
   return server;
 }
-const app = createMcpExpressApp();
+const app = createMcpExpressApp({
+  host: "0.0.0.0",
+  allowedHosts: [
+    "fieldops-mcp-danielb-260815.azurewebsites.net",
+    "localhost",
+    "127.0.0.1"
+  ]
+});
+
 const port = Number(process.env.PORT ?? 3000);
 
 app.get("/health", (_req: Request, res: Response) => {
