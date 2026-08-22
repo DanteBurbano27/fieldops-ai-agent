@@ -1,0 +1,8 @@
+﻿node_modules/
+.env
+dist/
+tmp/
+backup/
+deploy-relay/
+*.zip
+*.log
