@@ -139,6 +139,7 @@ test("contains asynchronous processing errors and logs a safe event", async () =
     await new Promise((resolve) => setTimeout(resolve, 20));
     const failure = logs.find((entry) => entry.event === "telegram.webhook.processing_failed");
     assert.equal(failure?.level, "ERROR");
-    assert.equal(failure?.data?.error, "simulated upstream failure");
+    assert.equal(failure?.data?.error_type, "Error");
+    assert.equal(failure?.data?.error, undefined);
   });
 });

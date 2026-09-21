@@ -67,7 +67,7 @@ export function createTelegramWebhookApp(deps: WebhookDependencies): Express {
       service: "fieldops-telegram-relay",
       telegram: "webhook",
       copilot: "direct-line",
-      vision: "enabled"
+      vision: "external"
     });
   });
 
@@ -123,7 +123,7 @@ export function createTelegramWebhookApp(deps: WebhookDependencies): Express {
       deps.log("ERROR", "telegram.webhook.processing_failed", {
         update_id: update.update_id,
         correlation_id: correlationId,
-        error: error instanceof Error ? error.message : String(error)
+        error_type: error instanceof Error ? error.name : "UnknownError"
       });
     });
   });
