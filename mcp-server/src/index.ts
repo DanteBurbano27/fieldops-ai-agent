@@ -1,11 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 
 type WorkOrderRecord = {
   work_order_id: string;
@@ -67,6 +67,25 @@ async function withInterventionWriteLock<T>(
 const dataDir = process.env.FIELDOPS_DATA_DIR
   ? path.resolve(process.env.FIELDOPS_DATA_DIR)
   : path.resolve(process.cwd(), "../data/seed");
+
+const configuredApiKey = process.env.FIELDOPS_MCP_API_KEY?.trim();
+if (!configuredApiKey) {
+  throw new Error("FIELDOPS_MCP_API_KEY is required; refusing to expose the MCP endpoint without authentication.");
+}
+const apiKey: string = configuredApiKey;
+
+const allowedHosts = (process.env.FIELDOPS_ALLOWED_HOSTS ?? "localhost,127.0.0.1")
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
+
+function hasValidBearerToken(req: Request): boolean {
+  const authorization = req.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) return false;
+  const received = Buffer.from(authorization.slice("Bearer ".length), "utf8");
+  const expected = Buffer.from(apiKey, "utf8");
+  return received.length === expected.length && timingSafeEqual(received, expected);
+}
 
 function dataFile(fileName: string): string {
   return path.join(dataDir, fileName);
@@ -392,11 +411,7 @@ function createServer() {
 }
 const app = createMcpExpressApp({
   host: "0.0.0.0",
-  allowedHosts: [
-    "fieldops-mcp-danielb-260815.azurewebsites.net",
-    "localhost",
-    "127.0.0.1"
-  ]
+  allowedHosts
 });
 
 const port = Number(process.env.PORT ?? 3000);
@@ -406,6 +421,14 @@ app.get("/health", (_req: Request, res: Response) => {
     status: "ok",
     service: "fieldops-mcp"
   });
+});
+
+app.use("/mcp", (req: Request, res: Response, next: NextFunction) => {
+  if (!hasValidBearerToken(req)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  next();
 });
 
 app.post("/mcp", async (req: Request, res: Response) => {
