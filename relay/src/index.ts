@@ -1,80 +1,28 @@
 import "dotenv/config";
 
 import {
-  randomUUID
-} from "node:crypto";
-
-import {
   mkdir,
   readFile,
   stat,
+  unlink,
   writeFile
 } from "node:fs/promises";
 
 import path from "node:path";
 
-import express, {
-  Request,
-  Response
-} from "express";
+import { loadRelayConfig } from "./config.js";
+import { createTelegramWebhookApp, type TelegramMessage, type TelegramPhoto, type TelegramUser } from "./webhook.js";
 
 /* =========================================================
    CONFIGURACIÓN
 ========================================================= */
 
-function requireEnv(
-  name: string
-): string {
-  const value = process.env[name];
-
-  if (!value) {
-    throw new Error(
-      `Falta ${name}. Revisa el archivo .env.`
-    );
-  }
-
-  return value;
-}
-
-const telegramToken =
-  requireEnv(
-    "TELEGRAM_BOT_TOKEN"
-  );
-
-const copilotTokenEndpoint =
-  requireEnv(
-    "COPILOT_TOKEN_ENDPOINT"
-  );
-
-const telegramWebhookSecret =
-  requireEnv(
-    "TELEGRAM_WEBHOOK_SECRET"
-  );
-
-const telegramAllowedUserIds =
-  new Set(
-    requireEnv(
-      "TELEGRAM_ALLOWED_USER_IDS"
-    )
-      .split(",")
-      .map(
-        (value) =>
-          Number(
-            value.trim()
-          )
-      )
-      .filter(
-        (value) =>
-          Number.isSafeInteger(
-            value
-          )
-      )
-  );
-
-const PORT =
-  Number(
-    process.env.PORT ?? 3000
-  );
+const relayConfig = loadRelayConfig(process.env);
+const telegramToken = relayConfig.telegramToken;
+const copilotTokenEndpoint = relayConfig.copilotTokenEndpoint;
+const telegramWebhookSecret = relayConfig.telegramWebhookSecret;
+const telegramAllowedUserIds = relayConfig.telegramAllowedUserIds;
+const PORT = relayConfig.port;
 
 const TELEGRAM_API =
   `https://api.telegram.org/bot${telegramToken}`;
@@ -111,43 +59,6 @@ interface TelegramResponse<T> {
   ok: boolean;
   result: T;
   description?: string;
-}
-
-interface TelegramUser {
-  id: number;
-  is_bot: boolean;
-  first_name: string;
-  username?: string;
-}
-
-interface TelegramChat {
-  id: number;
-  type: string;
-}
-
-interface TelegramPhoto {
-  file_id: string;
-  file_unique_id: string;
-  width: number;
-  height: number;
-  file_size?: number;
-}
-
-interface TelegramMessage {
-  message_id: number;
-  chat: TelegramChat;
-
-  text?: string;
-  caption?: string;
-
-  photo?: TelegramPhoto[];
-
-  from?: TelegramUser;
-}
-
-interface TelegramUpdate {
-  update_id: number;
-  message?: TelegramMessage;
 }
 
 interface TelegramFile {
@@ -274,11 +185,6 @@ function logEvent(
   );
 }
 
-function createCorrelationId():
-string {
-  return randomUUID();
-}
-
 function sleep(
   ms: number
 ): Promise<void> {
@@ -331,23 +237,6 @@ function directLineUserId(
 ): string {
   return (
     `telegram:${telegramUserId(message)}`
-  );
-}
-
-function isTelegramUserAllowed(
-  message: TelegramMessage
-): boolean {
-  const userId =
-    message.from?.id;
-
-  if (
-    userId === undefined
-  ) {
-    return false;
-  }
-
-  return telegramAllowedUserIds.has(
-    userId
   );
 }
 
@@ -1759,6 +1648,8 @@ async function handlePhoto(
       largestPhoto
     );
 
+  try {
+
   const inbound:
   FieldOpsInboundMessage = {
     source:
@@ -1858,6 +1749,15 @@ async function handlePhoto(
       response
     );
   }
+  } finally {
+    await unlink(localPath).catch((error) => {
+      logEvent("WARN", "telegram.photo.cleanup_failed", {
+        correlation_id: correlationId,
+        local_path: localPath,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }
 }
 
 /* =========================================================
@@ -1865,11 +1765,9 @@ async function handlePhoto(
 ========================================================= */
 
 async function handleMessage(
-  message: TelegramMessage
+  message: TelegramMessage,
+  correlationId: string
 ): Promise<void> {
-  const correlationId =
-    createCorrelationId();
-
   const startedAt =
     Date.now();
 
@@ -1903,34 +1801,6 @@ async function handleMessage(
   );
 
   try {
-    if (
-      !isTelegramUserAllowed(
-        message
-      )
-    ) {
-      logEvent(
-        "WARN",
-        "telegram.auth.denied",
-        {
-          correlation_id:
-            correlationId,
-
-          telegram_user_id:
-            message.from?.id,
-
-          chat_id:
-            message.chat.id
-        }
-      );
-
-      await sendMessage(
-        message.chat.id,
-        "No tiene autorización para utilizar FieldOps Assist."
-      );
-
-      return;
-    }
-
     if (
       message.text
     ) {
@@ -2074,145 +1944,19 @@ async function handleMessage(
    TELEGRAM WEBHOOK
 ========================================================= */
 
-const app =
-  express();
-
-app.disable(
-  "x-powered-by"
-);
-
-app.use(
-  express.json({
-    limit:
-      "2mb"
-  })
-);
-
-app.get(
-  "/health",
-  (
-    _req: Request,
-    res: Response
-  ) => {
-    res
-      .status(
-        200
-      )
-      .json({
-        status:
-          "ok",
-
-        service:
-          "fieldops-telegram-relay",
-
-        telegram:
-          "webhook",
-
-        copilot:
-          "direct-line",
-
-        vision:
-          "enabled"
-      });
-  }
-);
-
-app.post(
-  "/telegram/webhook",
-  (
-    req: Request,
-    res: Response
-  ) => {
-    const receivedSecret =
-      req.get(
-        "X-Telegram-Bot-Api-Secret-Token"
-      );
-
-    if (
-      receivedSecret !==
-      telegramWebhookSecret
-    ) {
-      logEvent(
-        "WARN",
-        "telegram.webhook.secret_rejected"
-      );
-
-      res.sendStatus(
-        401
-      );
-
-      return;
-    }
-
-    const update =
-      req.body as TelegramUpdate;
-
-    if (
-      !update ||
-      typeof update.update_id !==
-        "number"
-    ) {
-      logEvent(
-        "WARN",
-        "telegram.webhook.invalid_update"
-      );
-
-      res.sendStatus(
-        400
-      );
-
-      return;
-    }
-
-    /*
-     * Confirmamos rápidamente a Telegram.
-     * El procesamiento continúa después.
-     */
-    res.sendStatus(
-      200
-    );
-
-    logEvent(
-      "INFO",
-      "telegram.webhook.update_received",
-      {
-        update_id:
-          update.update_id,
-
-        has_message:
-          Boolean(
-            update.message
-          )
-      }
-    );
-
-    if (
-      !update.message
-    ) {
-      return;
-    }
-
-    void handleMessage(
-      update.message
-    ).catch(
-      (error) => {
-        logEvent(
-          "ERROR",
-          "telegram.webhook.processing_failed",
-          {
-            update_id:
-              update.update_id,
-
-            error:
-              error instanceof Error
-                ? error.message
-                : String(error)
-          }
-        );
-      }
-    );
-  }
-);
+const app = createTelegramWebhookApp({
+  webhookSecret: telegramWebhookSecret,
+  allowedUserIds: telegramAllowedUserIds,
+  maxImageSize: MAX_IMAGE_SIZE,
+  handleAuthorizedMessage: handleMessage,
+  notifyUnauthorized: async (chatId) => {
+    await sendMessage(chatId, "No tiene autorización para utilizar FieldOps Assist.");
+  },
+  notifyOversizedImage: async (chatId) => {
+    await sendMessage(chatId, "La imagen excede el límite de 15 MB.");
+  },
+  log: logEvent
+});
 
 /* =========================================================
    MAIN
