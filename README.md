@@ -1,613 +1,234 @@
 # FieldOps Assist
 
-FieldOps Assist es una prueba de concepto de un agente de IA para soporte a técnicos de campo.
+FieldOps Assist is a proof of concept for helping field technicians retrieve work-order context, check parts, consult technical knowledge, analyze a photo, and register a completed intervention after explicit confirmation.
 
-La solución integra Telegram, Azure App Service, Microsoft Copilot Studio, Model Context Protocol (MCP), recuperación de conocimiento técnico mediante RAG y análisis de fotografías.
+The repository provides a locally reproducible MCP service and deterministic tests. Telegram, Copilot Studio, Azure, RAG, and vision require external services and are not required by CI.
 
-El agente puede:
+## What the repository proves
 
-- Consultar órdenes de trabajo.
-- Consultar inventario y compatibilidad de repuestos.
-- Recuperar procedimientos desde documentación técnica.
-- Analizar fotografías enviadas por técnicos.
-- Mantener contexto conversacional.
-- Registrar intervenciones únicamente después de una confirmación explícita.
-- Prevenir registros duplicados mediante idempotencia.
-- Generar trazabilidad mediante `correlation_id`.
+| Capability | Evidence | Status |
+| --- | --- | --- |
+| Work-order and inventory MCP tools | Seed data plus automated HTTP/MCP tests | Tested locally |
+| Intervention confirmation, assignment checks, idempotency, and concurrent in-process writes | Automated tests using an isolated temporary data directory | Tested locally |
+| MCP endpoint authentication | Bearer-key rejection test; startup fails without a key | Tested locally |
+| Telegram webhook secret and user allowlist | Deterministic relay tests | Tested locally |
+| Relay text dispatch, image-size guard, correlation IDs, and safe asynchronous errors | Deterministic relay tests with injected handlers | Tested locally |
+| Telegram, Direct Line, Copilot Studio, RAG, and vision integration | Requires separately configured external services | External-service dependent |
+| Azure deployment | Application code and MCP Dockerfile are present; no infrastructure-as-code is included | Deployment-specific |
+| Distributed persistence and locking | Not implemented | Planned for a production design |
 
----
+This project does **not** implement route optimization.
 
-## Arquitectura
-
-```mermaid
-flowchart TD
-
-    A[Telegram] -->|HTTPS Webhook| B[Azure App Service Relay]
-
-    B -->|Allowlist + Webhook Secret| B
-
-    B -->|Direct Line| C[Copilot Studio]
-
-    C --> D[Knowledge / RAG]
-    C --> E[Vision]
-    C --> F[FieldOps MCP]
-
-    F --> G[get_work_order]
-    F --> H[check_inventory]
-    F --> I[register_intervention]
-
-    G --> J[FieldOps Seed Data]
-    H --> J
-    I --> J
-```
-
-Flujo principal:
+## Architecture and trust boundaries
 
 ```text
 Telegram
-    ↓
-HTTPS Webhook
-    ↓
-Relay Node.js / TypeScript
-    ↓
-Direct Line
-    ↓
-Copilot Studio
-    ├── RAG / Knowledge
-    ├── Vision
-    └── MCP
-          ├── get_work_order
-          ├── check_inventory
-          └── register_intervention
+  |
+  v
+Webhook secret validation
+  |
+  v
+Telegram user allowlist
+  |
+  v
+Relay (Node.js / TypeScript)
+  |
+  v
+Copilot Studio over Direct Line              external
+  |-- Knowledge / RAG                        external configuration
+  |-- Vision                                 external service
+  `-- MCP client
+        |
+        | Authorization: Bearer <FIELDOPS_MCP_API_KEY>
+        v
+      FieldOps MCP                           reproducible locally
+        |-- get_work_order
+        |-- check_inventory
+        `-- register_intervention
+              |
+              v
+            JSON seed/demo storage
 ```
 
----
+The Telegram webhook secret authenticates Telegram to the relay. The allowlist controls which Telegram user IDs reach agent processing. The MCP bearer key is a separate boundary and is mandatory: the server refuses to start without `FIELDOPS_MCP_API_KEY`. For a deployment, also set `FIELDOPS_ALLOWED_HOSTS` to the exact public host names.
 
-## Componentes
-
-### Relay Telegram
-
-Ubicación:
-
-```text
-relay/
-```
-
-Responsabilidades:
-
-- Recibir mensajes mediante Telegram Webhook.
-- Validar `X-Telegram-Bot-Api-Secret-Token`.
-- Aplicar allowlist de usuarios de Telegram.
-- Procesar texto y fotografías.
-- Descargar temporalmente fotografías.
-- Mantener una sesión Direct Line por `chat_id`.
-- Enviar mensajes y fotografías a Copilot Studio.
-- Limpiar citas y formato antes de responder en Telegram.
-- Generar logs estructurados.
-- Generar un `correlation_id` por solicitud.
-
----
-
-## MCP Server
-
-Ubicación:
-
-```text
-mcp-server/
-```
-
-Implementado con:
-
-- Node.js
-- TypeScript
-- Model Context Protocol SDK
-- Streamable HTTP
-- Zod
-- Express
-
-Herramientas disponibles:
+## MCP tools
 
 ### `get_work_order`
 
-Consulta una orden de trabajo mediante:
-
-```text
-work_order_id
-```
-
----
+Returns a seeded work order by `work_order_id`.
 
 ### `check_inventory`
 
-Consulta disponibilidad y compatibilidad de un repuesto considerando:
-
-```text
-work_order_id
-part_number
-```
-
-Distingue entre:
-
-- Compatibilidad.
-- Disponibilidad.
-- Cantidad disponible.
-
----
+Returns site stock, quantity, and equipment compatibility for a part.
 
 ### `register_intervention`
 
-Permite registrar una intervención técnica.
+Requires:
 
-Requiere:
+- `confirmed: true`;
+- an existing work order and technician;
+- the technician assigned to the work order;
+- a caller-provided `idempotency_key`;
+- a `correlation_id`.
 
-```text
-work_order_id
-technician_id
-action_summary
-result
-confirmed
-idempotency_key
-correlation_id
-```
+A replay of the same logical operation with the same idempotency key returns the stored intervention. Reusing that key for different content fails.
 
-La operación está protegida mediante:
+The JSON write queue serializes writes only within one Node.js process. It is appropriate for this PoC and its tests. It is not a distributed lock and does not make JSON files suitable for multiple App Service workers or instances.
 
-- Confirmación explícita.
-- Validación de orden de trabajo.
-- Validación de técnico.
-- Validación de asignación.
-- `idempotency_key`.
-- Bloqueo serializado de escritura.
-- Protección contra duplicados.
+## Reproduce the MCP locally
 
----
+Requirements: Node.js 22 and npm.
 
-## Seguridad
-
-### Telegram Webhook Secret
-
-Telegram debe enviar:
-
-```text
-X-Telegram-Bot-Api-Secret-Token
-```
-
-Las solicitudes con un secret incorrecto reciben:
-
-```text
-HTTP 401
-```
-
----
-
-### Allowlist de Telegram
-
-El Relay solo permite usuarios configurados en:
-
-```env
-TELEGRAM_ALLOWED_USER_IDS=
-```
-
-Se admiten múltiples IDs separados por coma:
-
-```env
-TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
-```
-
-Los usuarios no autorizados son rechazados antes de llegar a Copilot Studio.
-
----
-
-### Confirmación para escrituras
-
-`register_intervention` nunca debe ejecutarse automáticamente.
-
-El agente presenta primero un resumen:
-
-```text
-Resumen de intervención
-
-Orden:
-Técnico:
-Acción:
-Resultado:
-
-¿Confirmas que deseas registrar esta intervención?
-```
-
-Solo una confirmación explícita permite ejecutar la escritura.
-
----
-
-### Idempotencia
-
-Cada intervención lógica nueva utiliza una nueva:
-
-```text
-idempotency_key
-```
-
-La misma clave únicamente debe reutilizarse para reintentar exactamente la misma operación después de un fallo técnico incierto.
-
-Esto evita registros duplicados.
-
----
-
-## Observabilidad
-
-Cada mensaje genera un:
-
-```text
-correlation_id
-```
-
-Ejemplo:
-
-```json
-{
-  "level": "INFO",
-  "event": "telegram.message.received",
-  "correlation_id": "..."
-}
-```
-
-Eventos principales:
-
-```text
-relay.started
-
-telegram.webhook.update_received
-
-telegram.message.received
-
-telegram.auth.denied
-
-fieldops.inbound.normalized
-
-telegram.photo.download.started
-
-copilot.request.started
-
-copilot.request.completed
-
-telegram.message.completed
-
-telegram.message.failed
-```
-
-Esto permite seguir una solicitud completa:
-
-```text
-Telegram
-    ↓
-Relay
-    ↓
-Direct Line
-    ↓
-Copilot
-    ↓
-Respuesta
-```
-
-utilizando el mismo `correlation_id`.
-
-También se registra:
-
-- `chat_id`
-- `telegram_user_id`
-- `message_id`
-- `conversation_id`
-- tipo de mensaje
-- cantidad de respuestas
-- duración de Copilot
-- duración total
-
-No se registran tokens ni secrets.
-
----
-
-## Variables de entorno del Relay
-
-Crear:
-
-```text
-relay/.env
-```
-
-basándose en:
-
-```text
-relay/.env.example
-```
-
-Variables:
-
-```env
-TELEGRAM_BOT_TOKEN=
-COPILOT_TOKEN_ENDPOINT=
-TELEGRAM_WEBHOOK_SECRET=
-TELEGRAM_ALLOWED_USER_IDS=
-```
-
-El archivo `.env` está excluido de Git.
-
----
-
-## Ejecutar Relay localmente
-
-```powershell
-cd relay
-npm install
-```
-
-Desarrollo:
-
-```powershell
-npm run dev
-```
-
-Validación TypeScript:
-
-```powershell
-npm run typecheck
-```
-
-Build:
-
-```powershell
-npm run build
-```
-
-Producción:
-
-```powershell
-npm start
-```
-
-Health endpoint:
-
-```text
-GET /health
-```
-
-Ejemplo:
-
-```json
-{
-  "status": "ok",
-  "service": "fieldops-telegram-relay",
-  "telegram": "webhook",
-  "copilot": "direct-line",
-  "vision": "enabled"
-}
-```
-
----
-
-## Ejecutar MCP localmente
-
-```powershell
+```bash
 cd mcp-server
-npm install
-npm run build
-npm start
-```
-
-Health:
-
-```text
-http://localhost:3000/health
-```
-
----
-
-## Tests MCP
-
-Con el MCP ejecutándose localmente:
-
-```powershell
+npm ci
 npm test
 ```
 
-Cobertura smoke actual:
+The test command builds the service, starts it with a temporary copy of the seed data, executes 14 tests, and deletes the temporary data. It requires no Azure, Telegram, or Copilot credentials.
 
-```text
-health endpoint
-MCP tool discovery
-get_work_order
-unknown work order
-check_inventory
-```
+To run the service manually:
 
-Resultado esperado:
-
-```text
-tests 5
-pass 5
-fail 0
-```
-
----
-
-## Knowledge / RAG
-
-Copilot Studio utiliza documentación técnica específica de los equipos soportados.
-
-Reglas principales:
-
-- Identificar primero el modelo exacto.
-- No mezclar códigos ni procedimientos entre modelos.
-- Priorizar la documentación correspondiente al equipo de la OT.
-- No inventar valores no respaldados por la documentación.
-- Mantener restricciones y advertencias del fabricante.
-
----
-
-## Vision
-
-El técnico puede enviar una fotografía directamente por Telegram.
-
-Flujo:
-
-```text
-Telegram Photo
-      ↓
-Relay
-      ↓
-Download temporal
-      ↓
-Direct Line Upload
-      ↓
-Copilot Vision
-      ↓
-Contexto + RAG + OT
-      ↓
-Respuesta Telegram
-```
-
-La fotografía se trata como evidencia.
-
-El agente no debe asumir:
-
-- Marca.
-- Modelo.
-- Texto ilegible.
-- Valores.
-- Componentes.
-- Diagnósticos definitivos.
-
-cuando no puedan determinarse con suficiente fiabilidad.
-
----
-
-## Sesiones
-
-El Relay mantiene:
-
-```text
-Map<chat_id, CopilotSession>
-```
-
-Cada chat dispone de su propia conversación Direct Line.
-
-Comando:
-
-```text
-/reset
-```
-
-elimina la conversación actual y fuerza la creación de una nueva.
-
-Para esta PoC las sesiones están en memoria y se pierden cuando el App Service reinicia.
-
----
-
-## Despliegue
-
-Los componentes principales están preparados para Azure App Service.
-
-Relay:
-
-```text
-Node.js 22
+```bash
+cd mcp-server
+npm ci
+npm run build
+export FIELDOPS_MCP_API_KEY="replace-with-a-long-random-secret"
+export FIELDOPS_ALLOWED_HOSTS="localhost,127.0.0.1"
 npm start
 ```
 
-El puerto utiliza:
+PowerShell:
 
-```typescript
-process.env.PORT
+```powershell
+$env:FIELDOPS_MCP_API_KEY = "replace-with-a-long-random-secret"
+$env:FIELDOPS_ALLOWED_HOSTS = "localhost,127.0.0.1"
+npm start
 ```
 
-proporcionado por Azure.
-
-MCP:
+Health remains unauthenticated:
 
 ```text
-Node.js
-Streamable HTTP
+GET http://localhost:3000/health
 ```
 
-con soporte para:
-
-```env
-FIELDOPS_DATA_DIR=
-```
-
-permitiendo separar la ubicación de los datos entre desarrollo local y Azure.
-
----
-
-## Pruebas E2E realizadas
-
-La PoC ha sido validada en los siguientes escenarios:
+MCP requests require:
 
 ```text
-Telegram → Relay → Copilot
-Telegram → Relay → MCP
-Telegram → Relay → RAG
-Telegram → Relay → Vision
-Telegram → Relay → Vision + RAG + contexto OT
-Telegram → confirmación → register_intervention
-Telegram → allowlist
-Webhook Secret
-Idempotencia
-Correlation ID
+Authorization: Bearer <FIELDOPS_MCP_API_KEY>
 ```
 
----
+Set `FIELDOPS_DATA_DIR` to use a directory other than `data/seed`.
 
-## Limitaciones actuales
+## Reproduce the relay checks locally
 
-Esta implementación es una PoC.
+```bash
+cd relay
+npm ci
+npm run build
+npm run typecheck
+npm test
+```
 
-Limitaciones conocidas:
+The eight relay tests use local HTTP listeners and test doubles. They make no Telegram, Direct Line, Copilot, or Azure calls.
 
-- Sesiones Direct Line almacenadas únicamente en memoria.
-- Persistencia operacional basada en archivos JSON.
-- La allowlist se configura mediante variable de entorno.
-- La documentación técnica disponible no cubre todos los modelos posibles.
-- Los scripts de pruebas de Direct Line son pruebas manuales y no una suite E2E automatizada completa.
-- Para producción se recomienda una base de datos y almacenamiento persistente.
-- Para producción se recomienda integrar telemetría centralizada y alertas.
+For a real relay process, copy `relay/.env.example` to `relay/.env` and supply:
 
----
+```dotenv
+TELEGRAM_BOT_TOKEN=
+COPILOT_TOKEN_ENDPOINT=
+TELEGRAM_WEBHOOK_SECRET=
+TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
+PORT=3000
+```
 
-## Evolución recomendada
+All four integration values are required. Missing or malformed configuration fails closed during startup.
 
-Para una implementación productiva:
+## Tested behavior
+
+The MCP suite covers:
+
+- health and bearer authentication;
+- tool discovery;
+- work-order success and failure;
+- inventory availability;
+- missing explicit confirmation;
+- unknown work order;
+- unknown technician;
+- technician assignment mismatch;
+- successful registration;
+- idempotent replay;
+- idempotency conflict;
+- physical-write uniqueness;
+- concurrent in-process writes.
+
+The relay suite covers:
+
+- malformed webhook payload;
+- invalid webhook secret;
+- unauthorized user;
+- authorized text dispatch;
+- oversized image rejection before download;
+- missing environment variables;
+- correlation ID generation;
+- contained and logged asynchronous errors.
+
+Downloaded photos are removed in a `finally` block after processing. A second size check runs against the downloaded file when Telegram did not provide `file_size`.
+
+## CI
+
+`.github/workflows/ci.yml` runs separate Node 22 jobs for `mcp-server` and `relay`. Both jobs use `npm ci` and require no external secrets. The workflow checks builds, relay typechecking, and all local tests.
+
+## Dependency controls
+
+Both packages commit npm lockfiles. Targeted npm overrides select patched `fast-uri`, `hono`, and `qs` versions required by transitive dependency advisories. Run `npm audit` in each package after dependency changes; compatibility is enforced by the build and test suites.
+
+## External integration
+
+The relay can maintain one Direct Line conversation per Telegram `chat_id`, forward text and photos, and return cleaned responses. These paths require:
+
+- a Telegram bot and webhook;
+- an externally issued Copilot/Direct Line token endpoint;
+- Copilot Studio configuration;
+- separately configured RAG sources;
+- a vision-capable external service;
+- deployment-specific Azure configuration if hosted on Azure.
+
+The repository includes manual Direct Line exercise scripts, not a self-contained automated external E2E suite. External-service behavior should not be inferred from the local test count.
+
+## Security notes
+
+- `.env`, tokens, logs, build output, and local output directories are ignored.
+- The relay validates the Telegram webhook secret before payload processing.
+- Unauthorized Telegram users do not reach the agent handler.
+- The MCP endpoint rejects missing or invalid bearer keys.
+- Logs include correlation and operational identifiers, not configured secrets.
+- Production deployments should store secrets in a managed secret store, use TLS, restrict ingress, rotate credentials, rate-limit requests, and use a database with transactional uniqueness.
+
+## Limitations
+
+- This is a PoC, not a production service.
+- Relay sessions are in memory and disappear on restart.
+- Operational data is stored in JSON files.
+- MCP serialization and idempotency are process-local.
+- No distributed transaction, database uniqueness constraint, SLA, adoption, or business-impact claim is made.
+- The repository does not contain the external Copilot Studio, RAG, vision, Telegram, or Azure tenant configuration.
+- The repository does not include automated external E2E tests.
+
+## Repository structure
 
 ```text
-Azure Key Vault
-Azure Application Insights
-Azure SQL / Cosmos DB
-Azure Blob Storage
-Microsoft Entra ID
-RBAC
-Persistencia distribuida de sesiones
-CI/CD
-Tests E2E automatizados
-Rate limiting
-Rotación de secrets
+.
+|-- .github/workflows/ci.yml
+|-- data/seed/
+|-- mcp-server/
+|   |-- src/
+|   `-- tests/
+|-- relay/
+|   |-- src/
+|   `-- tests/
+|-- docs/
+|-- infra/
+`-- knowledge/
 ```
-
----
-
-## Estado
-
-```text
-MCP                     ✅
-Telegram Webhook        ✅
-Copilot Studio          ✅
-RAG                     ✅
-Vision                  ✅
-Contexto conversacional ✅
-Write Guard             ✅
-Idempotencia            ✅
-Allowlist               ✅
-Observabilidad          ✅
-Azure deployment        ✅
-E2E                     ✅
-```
-
-FieldOps Assist se encuentra funcional como prueba de concepto end-to-end.
